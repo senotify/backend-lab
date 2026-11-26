@@ -24,6 +24,25 @@ does **not** seek; Postgres walks the index from the top like OFFSET. A row
 subquery (`<= (SELECT created_at, id FROM item_checkpoints WHERE bucket = N)`)
 becomes an InitPlan and is used as an `Index Cond`.
 
+## Lab 02: Idempotency keys
+
+One "charge $25.00" endpoint written four ways (no idempotency, check-then-insert,
+unique constraint only, full idempotency key), each hit by a simulated client:
+double click, lost response + retries, a 10-request storm, a key reused for a
+different order, and a provider error followed by a retry. Charges land in an
+`idem_charges` ledger, so the verdict is what actually happened to the card.
+
+| | No idempotency | Check, then insert | Unique only | Full key |
+|---|---|---|---|---|
+| Double click | ✗ 2 charges | ✗ 2 charges (race) | ✓ | ✓ |
+| Lost response | ✗ 3 charges | ✓ | ✗ retry gets 409, no receipt | ✓ replay |
+| Retry storm | ✗ 10 charges | ✗ 10 charges | ✓ | ✓ |
+| Key reused | ✗ both charged | ✗ $99 order "succeeds" silently | ✗ opaque 409 | ✓ 422 |
+| Provider error | ✓ | ✓ | ✗ key stuck, can never pay | ✓ |
+
+Visitor runs use a separate `lab_rw` role that can only touch the `idem_*`
+tables; each run has its own `run_id` and data older than an hour is deleted.
+
 ## Running it
 
 ```sh

@@ -26,6 +26,7 @@ const (
 type DB struct {
 	admin *pgxpool.Pool
 	ro    *pgxpool.Pool
+	rw    *pgxpool.Pool // lab 02: may write only to the idem_* tables
 	ready atomic.Bool
 	state atomic.Value // string: human status while seeding
 }
@@ -107,6 +108,35 @@ func (d *DB) Setup(ctx context.Context) error {
 	}
 	for _, s := range []string{
 		`GRANT SELECT ON items, item_checkpoints TO lab_ro`,
+		// Lab 02 tables. Each visitor run gets its own run_id; old runs are
+		// deleted hourly.
+		`CREATE TABLE IF NOT EXISTS idem_charges (
+		   id           bigserial PRIMARY KEY,
+		   run_id       text NOT NULL,
+		   design       text NOT NULL,
+		   amount_cents int  NOT NULL,
+		   created_at   timestamptz NOT NULL DEFAULT now()
+		 )`,
+		`CREATE INDEX IF NOT EXISTS idem_charges_run ON idem_charges (run_id)`,
+		`CREATE TABLE IF NOT EXISTS idem_keys (
+		   run_id       text NOT NULL,
+		   design       text NOT NULL,
+		   key          text NOT NULL,
+		   request_hash text,
+		   status       text NOT NULL,
+		   response     jsonb,
+		   created_at   timestamptz NOT NULL DEFAULT now(),
+		   PRIMARY KEY (run_id, design, key)
+		 )`,
+		`DO $$ BEGIN
+		   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lab_rw') THEN
+		     CREATE ROLE lab_rw LOGIN;
+		   END IF;
+		 END $$`,
+		fmt.Sprintf(`ALTER ROLE lab_rw PASSWORD %s`, quoteLiteral(pass)),
+		`ALTER ROLE lab_rw SET statement_timeout = '5s'`,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON idem_charges, idem_keys TO lab_rw`,
+		`GRANT USAGE ON SEQUENCE idem_charges_id_seq TO lab_rw`,
 	} {
 		if _, err := d.admin.Exec(ctx, s); err != nil {
 			return err
@@ -125,6 +155,17 @@ func (d *DB) Setup(ctx context.Context) error {
 		return err
 	}
 	d.ro = ro
+
+	wcfg, err := pgxpool.ParseConfig(connString("lab_rw", pass))
+	if err != nil {
+		return err
+	}
+	wcfg.MaxConns = 5
+	rw, err := pgxpool.NewWithConfig(ctx, wcfg)
+	if err != nil {
+		return err
+	}
+	d.rw = rw
 	d.ready.Store(true)
 	d.state.Store("ready")
 	return nil

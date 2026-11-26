@@ -22,10 +22,11 @@ import (
 var webFS embed.FS
 
 type server struct {
-	db    *DB
-	cache resultCache
-	sweep atomic.Pointer[Sweep]
-	rl    *rateLimiter
+	db     *DB
+	cache  resultCache
+	sweep  atomic.Pointer[Sweep]
+	rl     *rateLimiter
+	idemRL *rateLimiter
 }
 
 func main() {
@@ -36,7 +37,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &server{db: db, rl: newRateLimiter(30, time.Minute)}
+	s := &server{db: db, rl: newRateLimiter(30, time.Minute), idemRL: newRateLimiter(10, time.Minute)}
 
 	go func() {
 		if err := db.Setup(ctx); err != nil {
@@ -46,14 +47,18 @@ func main() {
 		}
 		log.Println("ready")
 		s.refreshSweep(ctx)
-		t := time.NewTicker(24 * time.Hour)
-		defer t.Stop()
+		sweepT := time.NewTicker(24 * time.Hour)
+		cleanT := time.NewTicker(10 * time.Minute)
+		defer sweepT.Stop()
+		defer cleanT.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-sweepT.C:
 				s.refreshSweep(ctx)
+			case <-cleanT.C:
+				s.db.cleanupIdem(ctx)
 			}
 		}
 	}()
@@ -106,6 +111,7 @@ func (s *server) routes() http.Handler {
 	}
 	mux.HandleFunc("GET /{$}", page("index.html"))
 	mux.HandleFunc("GET /pagination", page("pagination.html"))
+	mux.HandleFunc("GET /idempotency", page("idempotency.html"))
 	mux.Handle("GET /static/", static) // files live at web/static/ in the embed
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /robots.txt", func(w http.ResponseWriter, r *http.Request) {
@@ -113,13 +119,17 @@ func (s *server) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /sitemap.xml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
-		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://lab.senotify.com/</loc></url><url><loc>https://lab.senotify.com/pagination</loc></url></urlset>`))
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://lab.senotify.com/</loc></url><url><loc>https://lab.senotify.com/pagination</loc></url><url><loc>https://lab.senotify.com/idempotency</loc></url></urlset>`))
 	})
 
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/pagination/strategies", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, Strategies) })
 	mux.HandleFunc("GET /api/pagination/run", s.run)
 	mux.HandleFunc("GET /api/pagination/rows", s.rows)
+	mux.HandleFunc("GET /api/idempotency/meta", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{"designs": Designs, "scenarios": Scenarios})
+	})
+	mux.HandleFunc("POST /api/idempotency/run", s.idemRun)
 	mux.HandleFunc("GET /api/pagination/sweep", func(w http.ResponseWriter, r *http.Request) {
 		sw := s.sweep.Load()
 		if sw == nil {
@@ -180,6 +190,35 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 		s.cache.put(key, *res)
 	}
 	writeJSON(w, 200, res)
+}
+
+func (s *server) idemRun(w http.ResponseWriter, r *http.Request) {
+	if !s.db.ready.Load() {
+		writeJSON(w, 503, map[string]any{"error": s.db.state.Load()})
+		return
+	}
+	scenario := r.URL.Query().Get("scenario")
+	known := false
+	for _, sc := range Scenarios {
+		known = known || sc.Key == scenario
+	}
+	if !known {
+		writeJSON(w, 400, map[string]string{"error": "unknown scenario"})
+		return
+	}
+	if !s.idemRL.allow(clientIP(r)) {
+		writeJSON(w, 429, map[string]string{"error": "Easy there: 10 runs a minute."})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	out, err := s.db.RunScenarioAll(ctx, scenario)
+	if err != nil {
+		log.Println("idempotency run:", err)
+		writeJSON(w, 500, map[string]string{"error": "run failed"})
+		return
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *server) rows(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotency Keys, Live | Backend Lab</title>
+<meta name="description" content="Double clicks, lost responses, retry storms and reused keys, fired at four real payment endpoint designs backed by Postgres. See which ones charge the customer once.">
+<link rel="canonical" href="https://lab.senotify.com/idempotency">
+<meta property="og:title" content="Idempotency keys, tested live">
+<meta property="og:description" content="Four payment endpoint designs vs five ways clients retry. Only one charges exactly once every time.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231c1c1a'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='14' font-weight='700' fill='%23fff' text-anchor='middle'%3E%7B%7D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/lab.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="/"><span class="brand-mark">{}</span>Backend Lab</a>
+  <nav><a href="/">All labs</a><a class="hide-sm" href="https://mild.senotify.com/@senotify">Blog</a></nav>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">Lab 02 · Payments · Postgres</div>
+    <h1>Charge once, no matter how the client retries</h1>
+    <p class="lede">The same "charge $25.00" endpoint, written four ways, each backed by real Postgres. Pick how the client misbehaves and watch what each design does to the customer's card.</p>
+    <div class="chips">
+      <span class="chip"><b>4</b> endpoint designs</span>
+      <span class="chip"><b>5</b> client failure modes</span>
+      <span class="chip">fake payment provider · <b>120-240 ms</b> per charge</span>
+      <span class="chip" id="status">connecting…</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>1. Pick how the client misbehaves</h2>
+    <p class="sub">Every run is isolated: your requests, keys and charges belong to a fresh run id.</p>
+    <div class="scenarios" id="scenarios"></div>
+    <div class="controls" style="margin-top:16px">
+      <button id="run" class="primary">Run against all 4 designs</button>
+      <button id="run-all" type="button">Run every scenario</button>
+    </div>
+    <div id="err" class="error" hidden></div>
+  </section>
+
+  <section class="panel" id="results-panel" hidden>
+    <h2 id="results-title">2. What happened</h2>
+    <p class="sub" id="results-expected"></p>
+    <div class="designs" id="results"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Scoreboard</h2>
+    <p class="sub">Fills in as you run scenarios. Only one design survives all five.</p>
+    <div style="overflow-x:auto"><table class="score" id="score"></table></div>
+  </section>
+
+  <section class="panel">
+    <h2>The four designs</h2>
+    <div class="design-docs" id="docs"></div>
+  </section>
+
+  <section class="panel">
+    <h2>The rules that make it work</h2>
+    <ol class="rules">
+      <li><strong>Claim the key atomically, before the side effect.</strong> <code>INSERT ... ON CONFLICT DO NOTHING</code> on a unique key. A <em>read</em> then <em>write</em> is a race, however fast it looks.</li>
+      <li><strong>Store the response, replay it.</strong> A retry should get the original receipt (same charge id), not a 409, or the client can't tell whether it paid.</li>
+      <li><strong>Fingerprint the request.</strong> Same key with a different body is a client bug: answer 422 instead of silently replaying the wrong result.</li>
+      <li><strong>Release the key when nothing happened.</strong> If the provider definitely didn't charge, delete the claim so a retry can succeed. Otherwise the customer is locked out.</li>
+      <li><strong>Answer 409 while in flight.</strong> Concurrent duplicates shouldn't wait on, or race, the first attempt.</li>
+    </ol>
+    <p class="note">The hard case this lab leaves out: the provider times out and you <em>don't know</em> if it charged. Then you can't release the key; you reconcile with the provider first. More on that in <a href="https://mild.senotify.com/@senotify/your-retry-queue-is-not-a-reconciliation-strategy-4b39039f">this write-up</a>.</p>
+  </section>
+</main>
+
+<footer><div class="wrap">Built by <a href="https://senotify.com">Arya Annurseno</a> · Go + pgx + Postgres 17 · <a href="https://github.com/senotify/backend-lab">Source on GitHub</a></div></footer>
+<script src="/static/idempotency.js"></script>
+</body>
+</html>

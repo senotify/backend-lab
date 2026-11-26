@@ -113,10 +113,10 @@ jobs:
         run: |
           set -euo pipefail
           H='${{ env.HOSTNAME }}'
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             s=$(curl -sS -m 15 --resolve "$H:443:${{ secrets.VPS_HOST }}" "https://$H/api/status" || true)
             echo "attempt $i: $s"
             if grep -q '"ready":true' <<<"$s"; then exit 0; fi
-            sleep 8   # first boot seeds 1M rows
+            sleep 8   # a fresh seed of 10M rows takes ~2-3 minutes
           done
           echo "lab did not become ready"; exit 1

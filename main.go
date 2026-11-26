@@ -81,7 +81,18 @@ func main() {
 	}
 }
 
+// refreshSweep reuses a stored sweep younger than a day. Measuring hammers the
+// disk for ~100s on the shared VPS, so a redeploy must not trigger it.
 func (s *server) refreshSweep(ctx context.Context) {
+	var raw []byte
+	if err := s.db.admin.QueryRow(ctx, `SELECT v FROM lab_meta WHERE k = 'sweep'`).Scan(&raw); err == nil {
+		var old Sweep
+		if json.Unmarshal(raw, &old) == nil && time.Since(old.MeasuredAt) < 23*time.Hour {
+			s.sweep.Store(&old)
+			log.Printf("reusing sweep from %s", old.MeasuredAt.Format(time.RFC3339))
+			return
+		}
+	}
 	start := time.Now()
 	sw, err := s.db.RunSweep(ctx)
 	if err != nil {
@@ -89,6 +100,10 @@ func (s *server) refreshSweep(ctx context.Context) {
 		return
 	}
 	s.sweep.Store(sw)
+	if b, err := json.Marshal(sw); err == nil {
+		_, _ = s.db.admin.Exec(ctx, `INSERT INTO lab_meta VALUES ('sweep', $1)
+			ON CONFLICT (k) DO UPDATE SET v = excluded.v`, string(b))
+	}
 	log.Printf("sweep measured in %s", time.Since(start).Round(time.Millisecond))
 }
 

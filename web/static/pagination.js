@@ -4,7 +4,7 @@ const COLORS = { offset: "--c-offset", deferred: "--c-deferred", keyset: "--c-ke
 const color = (k) => getComputedStyle(document.documentElement).getPropertyValue(COLORS[k]).trim();
 const fmt = (n) => n.toLocaleString("en-US");
 const fmtMs = (ms) => (ms < 1 ? ms.toFixed(2) : ms < 100 ? ms.toFixed(1) : Math.round(ms).toString()) + " ms";
-const TOTAL_PAGES = 50000;
+let TOTAL_PAGES = 500000; // replaced by /api/status on load
 let strategies = [];
 
 function el(tag, attrs = {}, ...kids) {
@@ -29,6 +29,14 @@ async function api(path) {
 async function pollStatus() {
   try {
     const s = await api("/api/status");
+    if (s.totalPages && s.totalPages !== TOTAL_PAGES) {
+      TOTAL_PAGES = s.totalPages;
+      $("c-rows").textContent = fmt(s.totalRows);
+      $("c-pages").textContent = fmt(s.totalPages);
+      $("of-pages").textContent = "of " + fmt(s.totalPages);
+      $("page").max = s.totalPages;
+      renderQuick();
+    }
     $("status").textContent = s.ready ? "● live" : "◌ " + s.state;
     $("status").style.color = s.ready ? color("keyset") : "";
     if (!s.ready) return setTimeout(pollStatus, 3000);
@@ -40,12 +48,13 @@ async function pollStatus() {
 }
 
 // ---------- quick picks ----------
-const QUICK = [
-  ["1", 1], ["50", 50], ["500", 500], ["5,000", 5000], ["25,000", 25000], ["49,000", 49000], ["Last (50,000)", 50000],
+const quickPicks = () => [
+  ["1", 1], ["50", 50], ["5,000", 5000], ["50,000", 50000],
+  [fmt(TOTAL_PAGES / 2), TOTAL_PAGES / 2], [fmt(TOTAL_PAGES - 1000), TOTAL_PAGES - 1000], [`Last (${fmt(TOTAL_PAGES)})`, TOTAL_PAGES],
 ];
 function renderQuick() {
   const q = $("quick");
-  q.replaceChildren(...QUICK.map(([label, p]) => {
+  q.replaceChildren(...quickPicks().map(([label, p]) => {
     const b = el("button", { type: "button" }, label);
     b.dataset.page = p;
     b.onclick = () => { $("page").value = p; runAll(); };
@@ -63,7 +72,7 @@ async function runAll() {
   const page = Math.round(Number($("page").value));
   $("err").hidden = true;
   if (!(page >= 1 && page <= TOTAL_PAGES)) {
-    $("err").textContent = "Pick a page between 1 and 50,000.";
+    $("err").textContent = `Pick a page between 1 and ${fmt(TOTAL_PAGES)}.`;
     $("err").hidden = false;
     return;
   }
@@ -188,6 +197,7 @@ function drawChart(points) {
   const W = 960, H = 380, L = 64, R = 16, T = 16, B = 46;
   const xs = points.map((p) => p.page);
   const all = points.flatMap((p) => Object.values(p.ms)).filter((v) => v > 0);
+  const timedOut = points.some((p) => Object.values(p.ms).some((v) => v < 0));
   const yMin = Math.pow(10, Math.floor(Math.log10(Math.min(...all)))), yMax = Math.pow(10, Math.ceil(Math.log10(Math.max(...all))));
   const x = (i) => L + (i / (points.length - 1)) * (W - L - R);
   const y = (v) => T + (1 - (Math.log10(v) - Math.log10(yMin)) / (Math.log10(yMax) - Math.log10(yMin))) * (H - T - B);
@@ -212,17 +222,19 @@ function drawChart(points) {
   points.forEach((p, i) => add("text", { x: x(i), y: H - B + 20, "text-anchor": "middle", "font-size": 12, fill: muted, "font-family": "monospace" }, "p." + fmt(p.page)));
   add("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle", "font-size": 12, fill: muted }, "page number (20 rows per page)");
   for (const s of strategies) {
-    const pts = points.map((p, i) => [x(i), y(Math.max(p.ms[s.key], yMin))]);
-    add("polyline", { points: pts.map((q) => q.join(",")).join(" "), fill: "none", stroke: color(s.key), "stroke-width": 2.5, "stroke-linejoin": "round" });
-    pts.forEach(([cx, cy], i) => {
-      const c = add("circle", { cx, cy, r: 4, fill: color(s.key) });
+    // Timed-out points (-1) are pinned to the top edge and drawn hollow.
+    const pts = points.map((p, i) => [x(i), p.ms[s.key] < 0 ? T : y(Math.max(p.ms[s.key], yMin)), p.ms[s.key] < 0]);
+    add("polyline", { points: pts.map((q) => q[0] + "," + q[1]).join(" "), fill: "none", stroke: color(s.key), "stroke-width": 2.5, "stroke-linejoin": "round" });
+    pts.forEach(([cx, cy, to], i) => {
+      const c = add("circle", to ? { cx, cy, r: 5, fill: "none", stroke: color(s.key), "stroke-width": 2 } : { cx, cy, r: 4, fill: color(s.key) });
       const t = document.createElementNS(ns, "title");
-      t.textContent = `${s.name} · page ${fmt(points[i].page)}: ${fmtMs(points[i].ms[s.key])}`;
+      t.textContent = `${s.name} · page ${fmt(points[i].page)}: ${to ? "timed out (> 20 s)" : fmtMs(points[i].ms[s.key])}`;
       c.append(t);
     });
   }
   $("chart").replaceChildren(svg);
-  $("legend").replaceChildren(...strategies.map((s) => el("span", {}, el("span", { class: "dot", style: `background:${color(s.key)}` }), s.name)));
+  $("legend").replaceChildren(...strategies.map((s) => el("span", {}, el("span", { class: "dot", style: `background:${color(s.key)}` }), s.name)),
+    ...(timedOut ? [el("span", {}, "○ hollow at the top = timed out after 20 s")] : []));
 }
 
 function renderExplain() {

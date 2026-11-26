@@ -5,7 +5,7 @@ Interactive backend experiments measured live on real infrastructure:
 
 ## Lab 01: OFFSET vs keyset pagination
 
-A static 1,000,000-row Postgres table (20 rows/page, 50,000 pages, index on
+A static 10,000,000-row Postgres table (20 rows/page, 500,000 pages, index on
 `(created_at DESC, id DESC)`). Visitors pick any page; five strategies fetch the
 same 20 rows and the page shows `EXPLAIN (ANALYZE, BUFFERS)` timing, rows
 touched and the plan for each:
@@ -27,7 +27,7 @@ becomes an InitPlan and is used as an `Index Cond`.
 ## Running it
 
 ```sh
-docker compose up --build     # http://localhost:8090, seeds 1M rows on first boot (~10s)
+docker compose up --build     # http://localhost:8090, seeds 10M rows on first boot (a few minutes)
 ```
 
 ## Guardrails (it shares a 2 vCPU VPS with real apps)

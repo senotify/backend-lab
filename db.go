@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	TotalRows      = 1_000_000
+	TotalRows      = 10_000_000
 	PageSize       = 20
 	TotalPages     = TotalRows / PageSize
 	CheckpointStep = 1000 // one checkpoint row per 1,000 items
-	seedVersion    = 1    // bump to force a reseed with a new dataset shape
+	seedVersion    = 2    // bump to force a reseed with a new dataset shape
 )
 
 // DB holds two pools: admin (setup, seeding, the sweep) and a read-only pool
@@ -96,7 +96,11 @@ func (d *DB) Setup(ctx context.Context) error {
 
 	var have string
 	_ = d.admin.QueryRow(ctx, `SELECT v FROM lab_meta WHERE k = 'seed_version'`).Scan(&have)
-	if have != fmt.Sprint(seedVersion) {
+	// items is UNLOGGED (fast to load, no WAL), so Postgres empties it after a
+	// crash. Check the last row actually exists, not just the version marker.
+	var present bool
+	_ = d.admin.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM items WHERE id = %d)`, TotalRows)).Scan(&present)
+	if have != fmt.Sprint(seedVersion) || !present {
 		if err := d.seed(ctx); err != nil {
 			return err
 		}
@@ -128,14 +132,14 @@ func (d *DB) Setup(ctx context.Context) error {
 
 func (d *DB) seed(ctx context.Context) error {
 	start := time.Now()
-	d.state.Store("seeding 1,000,000 rows (first boot only, about a minute)")
+	d.state.Store("seeding 10,000,000 rows (first boot only, a few minutes)")
 	log.Println("seeding dataset")
 	steps := []string{
 		`DROP TABLE IF EXISTS item_checkpoints`,
 		`DROP TABLE IF EXISTS items`,
 		// created_at repeats in groups of three, so the (created_at, id)
 		// tiebreaker genuinely matters, like real timestamps do.
-		`CREATE TABLE items (
+		`CREATE UNLOGGED TABLE items (
 		   id         bigint PRIMARY KEY,
 		   created_at timestamptz NOT NULL,
 		   title      text NOT NULL,
@@ -145,12 +149,13 @@ func (d *DB) seed(ctx context.Context) error {
 		 SELECT g,
 		        timestamptz '2026-11-01 00:00:00+00' - ((%d - g) / 3) * interval '17 seconds',
 		        'Post #' || g,
-		        repeat(md5(g::text), 10)
+		        md5(g::text) || md5((g * 7)::text) || md5((g * 13)::text)
 		 FROM generate_series(1, %d) AS g`, TotalRows, TotalRows),
+		`SET maintenance_work_mem = '256MB'`,
 		`CREATE INDEX items_feed ON items (created_at DESC, id DESC)`,
 		// The dataset is static, so checkpoints are exact and never stale.
 		// (On live data you'd refresh this periodically; see the lab page.)
-		fmt.Sprintf(`CREATE TABLE item_checkpoints AS
+		fmt.Sprintf(`CREATE UNLOGGED TABLE item_checkpoints AS
 		 SELECT ((rn - 1) / %d)::int AS bucket, created_at, id
 		 FROM (SELECT created_at, id,
 		              row_number() OVER (ORDER BY created_at DESC, id DESC) AS rn
@@ -162,8 +167,15 @@ func (d *DB) seed(ctx context.Context) error {
 		fmt.Sprintf(`INSERT INTO lab_meta VALUES ('seed_version', '%d')
 		 ON CONFLICT (k) DO UPDATE SET v = excluded.v`, seedVersion),
 	}
+	// One connection for the whole seed, so the session SET applies to the
+	// CREATE INDEX that follows it.
+	conn, err := d.admin.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
 	for _, s := range steps {
-		if _, err := d.admin.Exec(ctx, s); err != nil {
+		if _, err := conn.Exec(ctx, s); err != nil {
 			return fmt.Errorf("seed %q: %w", firstLine(s), err)
 		}
 	}

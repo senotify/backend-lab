@@ -244,7 +244,7 @@ type Sweep struct {
 	Points     []SweepPoint `json:"points"`
 }
 
-var sweepDepths = []int{0, 1_000, 10_000, 100_000, 250_000, 500_000, TotalRows - PageSize}
+var sweepDepths = []int{0, 10_000, 100_000, 1_000_000, 2_500_000, 5_000_000, TotalRows - PageSize}
 
 func (d *DB) RunSweep(ctx context.Context) (*Sweep, error) {
 	sw := &Sweep{MeasuredAt: time.Now().UTC()}
@@ -258,14 +258,24 @@ func (d *DB) RunSweep(ctx context.Context) (*Sweep, error) {
 			}
 			var times []float64
 			for i := 0; i < 3; i++ {
-				out, err := explain(ctx, d.admin, sql)
+				// Cap each measurement so a deep OFFSET can't hog the shared box.
+				qctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				out, err := explain(qctx, d.admin, sql)
+				cancel()
 				if err != nil {
+					if isTimeout(err) {
+						times = []float64{-1} // shown as "timed out"
+						break
+					}
 					return nil, err
 				}
 				times = append(times, out.Execution)
+				if out.Execution > 1000 {
+					break // slow enough that one run tells the story
+				}
 			}
 			sort.Float64s(times)
-			pt.Ms[s.Key] = round2(times[1])
+			pt.Ms[s.Key] = round2(times[len(times)/2])
 		}
 		sw.Points = append(sw.Points, pt)
 	}

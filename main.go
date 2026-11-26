@@ -46,7 +46,7 @@ func main() {
 		}
 		log.Println("ready")
 		s.refreshSweep(ctx)
-		t := time.NewTicker(6 * time.Hour)
+		t := time.NewTicker(24 * time.Hour)
 		defer t.Stop()
 		for {
 			select {

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OFFSET vs Keyset Pagination, Live | Backend Lab</title>
+<meta name="description" content="Jump to any page of a 1,000,000-row Postgres table and compare OFFSET, deferred join, keyset and checkpoint pagination with real timings and query plans.">
+<link rel="canonical" href="https://lab.senotify.com/pagination">
+<meta property="og:title" content="OFFSET vs keyset pagination, measured live">
+<meta property="og:description" content="Five pagination strategies racing on a real 1,000,000-row Postgres table.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231c1c1a'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='14' font-weight='700' fill='%23fff' text-anchor='middle'%3E%7B%7D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/lab.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="/"><span class="brand-mark">{}</span>Backend Lab</a>
+  <nav><a href="/">All labs</a><a class="hide-sm" href="https://mild.senotify.com/@senotify">Blog</a></nav>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">Lab 01 · Postgres pagination</div>
+    <h1>OFFSET vs keyset, on a real million-row table</h1>
+    <p class="lede">Pick a page, any page. Five strategies fetch the same 20 rows and you see exactly how much work Postgres did for each: time, rows touched, and the real query plan.</p>
+    <div class="chips">
+      <span class="chip"><b>1,000,000</b> rows</span>
+      <span class="chip"><b>50,000</b> pages × 20</span>
+      <span class="chip">index <b>(created_at DESC, id DESC)</b></span>
+      <span class="chip">Postgres 17 · 2 vCPU VPS</span>
+      <span class="chip" id="status">connecting…</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Jump to a page</h2>
+    <p class="sub">Every strategy returns identical rows. The only difference is the work behind them.</p>
+    <div class="controls">
+      <label for="page">Page</label>
+      <input id="page" type="number" min="1" max="50000" value="25000">
+      <span class="note" style="margin:0">of 50,000</span>
+      <button id="run" class="primary">Run all 5 strategies</button>
+    </div>
+    <div class="quick" id="quick"></div>
+    <div id="err" class="error" hidden></div>
+    <div id="results" class="results"></div>
+    <details id="rows-wrap" hidden>
+      <summary>Show the 20 rows on this page</summary>
+      <table class="rows"><thead><tr><th>id</th><th>created_at</th><th>title</th></tr></thead><tbody id="rows"></tbody></table>
+    </details>
+  </section>
+
+  <section class="panel">
+    <h2>Latency vs page depth</h2>
+    <p class="sub" id="sweep-sub">Measured on this server (median of 3 runs per point, log scale).</p>
+    <div class="chart-wrap" id="chart"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="panel">
+    <h2>What each strategy is doing</h2>
+    <div class="explain" id="explain"></div>
+    <p class="note" style="margin-top:18px">This dataset never changes, so the checkpoints are exact. On a live table, new rows shift every page, so you'd refresh checkpoints periodically, or number pages from the oldest end so they stay put. The full trade-offs are in <a href="https://mild.senotify.com/@senotify/stop-using-offset-keyset-pagination-in-postgres-e7bfc8ef">the write-up on Mild</a>.</p>
+  </section>
+</main>
+
+<footer><div class="wrap">Built by <a href="https://senotify.com">Arya Annurseno</a> · Go + pgx + Postgres 17 · Visitor queries run as a read-only role with a 5s timeout and a 3-connection pool.</div></footer>
+<script src="/static/pagination.js"></script>
+</body>
+</html>

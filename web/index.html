@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backend Lab</title>
+<meta name="description" content="Interactive backend experiments on real infrastructure: pagination, idempotency, rate limiting and more, measured live on Postgres.">
+<link rel="canonical" href="https://lab.senotify.com/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231c1c1a'/%3E%3Ctext x='16' y='21' font-family='monospace' font-size='14' font-weight='700' fill='%23fff' text-anchor='middle'%3E%7B%7D%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/lab.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="/"><span class="brand-mark">{}</span>Backend Lab</a>
+  <nav><a href="https://mild.senotify.com/@senotify">Blog</a><a class="hide-sm" href="https://senotify.com">About</a></nav>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">Real queries · real server · real numbers</div>
+    <h1>Backend Lab</h1>
+    <p class="lede">Interactive experiments for the backend ideas people argue about. Every number on these pages is measured live on a real Postgres running on a small VPS, not copied from a blog post.</p>
+  </section>
+
+  <div class="cards">
+    <a class="card" href="/pagination">
+      <span class="eyebrow">Lab 01 · Postgres</span>
+      <h3>OFFSET vs keyset pagination</h3>
+      <p>Jump anywhere in a 1,000,000-row table and watch five strategies race, with their real query plans.</p>
+    </a>
+    <div class="card soon">
+      <span class="eyebrow">Lab 02 · coming soon</span>
+      <h3>Idempotency keys</h3>
+      <p>Retry the same payment 10 times and see which designs charge once.</p>
+    </div>
+    <div class="card soon">
+      <span class="eyebrow">Lab 03 · coming soon</span>
+      <h3>Rate limiter algorithms</h3>
+      <p>Fixed window vs sliding window vs token bucket, under the same burst.</p>
+    </div>
+    <div class="card soon">
+      <span class="eyebrow">Lab 04 · coming soon</span>
+      <h3>Cache stampede</h3>
+      <p>What happens when a hot key expires and 500 requests miss at once.</p>
+    </div>
+  </div>
+</main>
+
+<footer><div class="wrap">Built by <a href="https://senotify.com">Arya Annurseno</a> · Go + Postgres 17 on a 2 vCPU VPS · Write-ups on <a href="https://mild.senotify.com/@senotify">Mild</a></div></footer>
+</body>
+</html>

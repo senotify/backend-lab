@@ -1,0 +1,15 @@
+# Local development. Production runs the same two containers via the deploy workflow.
+services:
+  lab-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: localdev
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "work_mem=4MB", "-c", "max_connections=20"]
+    shm_size: 256m
+  lab:
+    build: .
+    environment:
+      LAB_DB_PASSWORD: localdev
+      PGHOST: lab-postgres
+    ports: ["8090:8080"]
+    depends_on: [lab-postgres]
